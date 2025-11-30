@@ -121,7 +121,7 @@ const server = http.createServer(async (req, res) => {
 
       if (YOCO_TEST) {
         const fakeId = `test_${Date.now()}`;
-        STATUS.set(clientReferenceId, { status: 'created', updatedAt: Date.now(), checkoutId: fakeId });
+        STATUS.set(clientReferenceId, { status: 'succeeded', updatedAt: Date.now(), checkoutId: fakeId });
         return json(res, 200, { id: fakeId, redirectUrl: `${SITE_URL}/payment/success?ref=${encodeURIComponent(clientReferenceId)}` });
       }
 

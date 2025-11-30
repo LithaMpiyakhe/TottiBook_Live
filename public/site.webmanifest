@@ -1,0 +1,20 @@
+{
+  "name": "Totti Shuttle Service",
+  "short_name": "Totti",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f2f4d",
+  "theme_color": "#0f2f4d",
+  "icons": [
+    {
+      "src": "/totti-logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/totti-logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

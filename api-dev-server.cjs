@@ -12,6 +12,10 @@ const YOCO_API = 'https://payments.yoco.com/api/checkouts';
 const SECRET = process.env.YOCO_SECRET_KEY || '';
 const YOCO_TEST = String(process.env.YOCO_TEST_MODE || '').toLowerCase() === '1' || String(process.env.YOCO_TEST_MODE || '').toLowerCase() === 'true';
 const SITE_URL = process.env.SITE_URL || 'http://localhost:8080';
+function normalizeSiteUrl(u) {
+  const s = String(u || '').trim().replace(/^[`'"]+|[`'"]+$/g, '');
+  return s.replace(/\/$/, '');
+}
 // Microsoft Graph env (optional)
 const GRAPH_TENANT_ID = process.env.GRAPH_TENANT_ID || '';
 const GRAPH_CLIENT_ID = process.env.GRAPH_CLIENT_ID || '';
@@ -114,15 +118,15 @@ const server = http.createServer(async (req, res) => {
         currency,
         metadata: { ...metadata, clientReferenceId },
         clientReferenceId,
-        successUrl: `${SITE_URL}/payment/success?ref=${encodeURIComponent(clientReferenceId)}`,
-        cancelUrl: `${SITE_URL}/payment/cancel`,
-        failureUrl: `${SITE_URL}/payment/failure`,
+        successUrl: `${normalizeSiteUrl(SITE_URL)}/payment/success?ref=${encodeURIComponent(clientReferenceId)}`,
+        cancelUrl: `${normalizeSiteUrl(SITE_URL)}/payment/cancel`,
+        failureUrl: `${normalizeSiteUrl(SITE_URL)}/payment/failure`,
       };
 
       if (YOCO_TEST) {
         const fakeId = `test_${Date.now()}`;
         STATUS.set(clientReferenceId, { status: 'succeeded', updatedAt: Date.now(), checkoutId: fakeId });
-        return json(res, 200, { id: fakeId, redirectUrl: `${SITE_URL}/payment/success?ref=${encodeURIComponent(clientReferenceId)}` });
+        return json(res, 200, { id: fakeId, redirectUrl: `${normalizeSiteUrl(SITE_URL)}/payment/success?ref=${encodeURIComponent(clientReferenceId)}` });
       }
 
       const resp = await postJson(YOCO_API, { Authorization: `Bearer ${SECRET}`, Accept: 'application/json' }, payload);
@@ -194,6 +198,64 @@ const server = http.createServer(async (req, res) => {
     }
     const v = STATUS.get(ref);
     return json(res, 200, v);
+  }
+
+  // Yoco webhook management (admin-protected)
+  if (url.pathname === '/api/yoco/register-webhook' && req.method === 'POST') {
+    const body = await parseBody(req);
+    const pin = String(body.pin || '');
+    const name = String(body.name || 'totti-webhook');
+    const webhookUrl = String(body.url || '').trim();
+    const effective = ADMIN_PIN_RUNTIME || ADMIN_PIN;
+    if (effective && pin !== effective) return json(res, 401, { ok: false, error: 'Invalid PIN' });
+    if (!/^https?:\/\//i.test(webhookUrl)) return json(res, 400, { ok: false, error: 'Invalid webhook URL' });
+    if (!SECRET) return json(res, 500, { ok: false, error: 'Missing YOCO_SECRET_KEY env' });
+    try {
+      const resp = await postJson('https://payments.yoco.com/api/webhooks', { Authorization: `Bearer ${SECRET}`, Accept: 'application/json' }, { name, url: webhookUrl });
+      let data = {}; try { data = JSON.parse(resp.body); } catch (_) { data = { raw: resp.body }; }
+      if (resp.statusCode < 200 || resp.statusCode >= 300) return json(res, resp.statusCode, { ok: false, error: data });
+      return json(res, 200, { ok: true, data });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: (err && err.message) ? err.message : 'Unexpected error' });
+    }
+  }
+
+  if (url.pathname === '/api/yoco/webhooks' && req.method === 'GET') {
+    if (!SECRET) return json(res, 500, { ok: false, error: 'Missing YOCO_SECRET_KEY env' });
+    try {
+      const resp = await getJson('https://payments.yoco.com/api/webhooks', { Authorization: `Bearer ${SECRET}`, Accept: 'application/json' });
+      let data = {}; try { data = JSON.parse(resp.body); } catch (_) { data = { raw: resp.body }; }
+      if (resp.statusCode < 200 || resp.statusCode >= 300) return json(res, resp.statusCode, { ok: false, error: data });
+      return json(res, 200, { ok: true, data });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: (err && err.message) ? err.message : 'Unexpected error' });
+    }
+  }
+
+  if (url.pathname === '/api/yoco/delete-webhook' && req.method === 'POST') {
+    const body = await parseBody(req);
+    const pin = String(body.pin || '');
+    const id = String(body.id || '').trim();
+    const effective = ADMIN_PIN_RUNTIME || ADMIN_PIN;
+    if (effective && pin !== effective) return json(res, 401, { ok: false, error: 'Invalid PIN' });
+    if (!id) return json(res, 400, { ok: false, error: 'Missing webhook id' });
+    if (!SECRET) return json(res, 500, { ok: false, error: 'Missing YOCO_SECRET_KEY env' });
+    try {
+      const urlStr = `https://payments.yoco.com/api/webhooks/${encodeURIComponent(id)}`;
+      // Yoco uses DELETE; using https.request via getJson/postJson helpers is fine to implement directly here
+      const urlObj = new URL(urlStr);
+      const opts = { hostname: urlObj.hostname, port: urlObj.port || 443, path: urlObj.pathname + (urlObj.search || ''), method: 'DELETE', headers: { Authorization: `Bearer ${SECRET}` } };
+      const del = await new Promise((resolve, reject) => {
+        const req2 = https.request(opts, (res2) => { const chunks = []; res2.on('data', c => chunks.push(c)); res2.on('end', () => resolve({ statusCode: res2.statusCode, body: Buffer.concat(chunks).toString('utf8') })); });
+        req2.on('error', (e) => reject(e));
+        req2.end();
+      });
+      let data = {}; try { data = JSON.parse(del.body); } catch (_) { data = { raw: del.body }; }
+      if (del.statusCode < 200 || del.statusCode >= 300) return json(res, del.statusCode, { ok: false, error: data });
+      return json(res, 200, { ok: true, data });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: (err && err.message) ? err.message : 'Unexpected error' });
+    }
   }
 
   // Calendar: blocked dates endpoint (mock for dev)
@@ -388,7 +450,7 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/api/health' && req.method === 'GET') {
     const graphPresent = !!GRAPH_TENANT_ID && !!GRAPH_CLIENT_ID && !!GRAPH_CLIENT_SECRET;
-    return json(res, 200, { secretPresent: !!SECRET, siteUrl: SITE_URL, icsPresent: !!ICS_URL, graphPresent });
+    return json(res, 200, { secretPresent: !!SECRET, siteUrl: normalizeSiteUrl(SITE_URL), icsPresent: !!ICS_URL, graphPresent });
   }
 
   // Static file serving and SPA fallback (Hostinger)

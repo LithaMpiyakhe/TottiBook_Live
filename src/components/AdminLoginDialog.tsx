@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { apiBase } from "@/lib/utils";
 
 interface AdminLoginDialogProps {
   open: boolean;
@@ -22,7 +23,8 @@ const AdminLoginDialog: React.FC<AdminLoginDialogProps> = ({ open, onOpenChange,
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch('/api/admin/status');
+        const base = apiBase();
+        const r = await fetch(`${base}/api/admin/status`);
         if (r.ok) {
           const data = await r.json();
           setRequiresPin(!!data.requiresPin);
@@ -35,7 +37,8 @@ const AdminLoginDialog: React.FC<AdminLoginDialogProps> = ({ open, onOpenChange,
     setSubmitting(true);
     setError("");
     try {
-      const resp = await fetch('/api/admin/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin }) });
+      const base = apiBase();
+      const resp = await fetch(`${base}/api/admin/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin }) });
       if (resp.ok) {
         try {
           if (remember) {

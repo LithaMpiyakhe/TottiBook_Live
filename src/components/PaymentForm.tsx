@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { CreditCard, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { showSuccess, showError } from "@/utils/toast";
 import { createCheckout } from "@/services/yocoService";
 
-interface BookingSummary { route: string; passengers: number }
+interface BookingSummary { route: string; passengers: number; date: string; time: string; name: string; email: string; phone: string }
 interface PaymentFormProps {
   amount: number;
   bookingData: BookingSummary;
@@ -24,6 +25,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
   const [redirectUrl, setRedirectUrl] = useState<string | null>(null);
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [checkoutId, setCheckoutId] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     // In future, readiness can check env vars or a health check to backend
@@ -42,7 +44,15 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
       const checkout = await createCheckout({
         amountInRands: amount,
         currency: "ZAR",
-        metadata: { route: bookingData.route, passengers: bookingData.passengers },
+        metadata: {
+          route: bookingData.route,
+          passengers: bookingData.passengers,
+          date: bookingData.date,
+          time: bookingData.time,
+          name: bookingData.name,
+          email: bookingData.email,
+          phone: bookingData.phone,
+        },
         clientReferenceId: clientRef,
       });
 
@@ -50,7 +60,13 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
         setCheckoutId(checkout.id || null);
         setRedirectUrl(checkout.redirectUrl);
         try {
-          window.location.assign(checkout.redirectUrl);
+          const u = new URL(checkout.redirectUrl, window.location.origin);
+          if (u.origin === window.location.origin) {
+            navigate(u.pathname + u.search);
+          } else {
+            const w = window.open(checkout.redirectUrl, '_blank', 'noopener');
+            if (!w) throw new Error('Popup blocked');
+          }
         } catch (_) {
           showError("Redirect blocked. Click the button to open payment page.");
         }

@@ -1,7 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar } from "@/components/ui/avatar";
 import LinktreeLink from "./LinktreeLink";
-import { Bus, LogIn, LogOut, Calendar as CalIcon } from "lucide-react";
+import { Bus, LogIn, LogOut, LayoutDashboard } from "lucide-react";
 import ShuttleSchedule from "./ShuttleSchedule";
 import TottiLogo from "./TottiLogo";
 import { Separator } from "@/components/ui/separator";
@@ -32,7 +32,7 @@ const adminLinks = [
   {
     title: "Admin Dashboard",
     href: "/admin",
-    icon: <WhatsAppIcon />,
+    icon: <LayoutDashboard className="h-5 w-5 text-primary" />,
   },
 ];
 
@@ -103,7 +103,7 @@ const TottiLinktree: React.FC = () => {
           <div className="w-full space-y-6 mb-8">
           {!isAdmin && (
             <div>
-              <div className="text-[0.21875rem] uppercase tracking-wide text-muted-foreground mb-2">For Passengers</div>
+              <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">For Passengers</div>
               <div className="space-y-4">
                 {userLinks.map((link) => (
                   <LinktreeLink

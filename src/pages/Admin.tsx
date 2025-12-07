@@ -6,7 +6,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Form, FormField, FormItem, FormLabel, FormControl } from "@/components/ui/form";
 import { useForm } from "react-hook-form";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Home } from "lucide-react";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
 import { format, parseISO } from "date-fns";
@@ -14,6 +14,7 @@ import AdminLoginDialog from "@/components/AdminLoginDialog";
 import AdminChangePinDialog from "@/components/AdminChangePinDialog";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { apiBase } from "@/lib/utils";
 
 const ROUTES = [
   { id: "Mthatha_to_KingPhalo", label: "Mthatha → King Phalo" },
@@ -31,6 +32,7 @@ const TIME_SLOTS: Record<string, string[]> = {
 
 const Admin: React.FC = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const [isAdmin, setIsAdmin] = useState<boolean>(() => {
     if (new URLSearchParams(location.search).get("admin") === "1") return true;
     try { if (sessionStorage.getItem("totti_admin") === "1") return true; } catch (_) {}
@@ -58,13 +60,14 @@ const Admin: React.FC = () => {
   const [syncMsg, setSyncMsg] = useState("");
   const [section, setSection] = useState<'calendar'|'slots'|'requests'>('calendar');
   const [qtnEnabled, setQtnEnabled] = useState<boolean>(true);
+  const [qtnRoutes, setQtnRoutes] = useState<{Queenstown_to_KingPhalo:boolean;KingPhalo_to_Queenstown:boolean}>({ Queenstown_to_KingPhalo: true, KingPhalo_to_Queenstown: true });
   const lastTap = useRef<{ date: string; ts: number } | null>(null);
 
   const form = useForm<{ route: string }>({ defaultValues: { route: "Queenstown_to_KingPhalo" } });
   const route = form.watch("route");
 
   const refreshBlocked = async () => {
-    const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+    const base = apiBase();
     const resp = await fetch(`${base}/api/calendar/blocked`);
     if (resp.ok) {
       const data = await resp.json();
@@ -73,7 +76,7 @@ const Admin: React.FC = () => {
     }
   };
   const refreshRequests = async () => {
-    const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+    const base = apiBase();
     const resp = await fetch(`${base}/api/queenstown/list?date=${dateStr}`);
     if (resp.ok) {
       const data = await resp.json();
@@ -85,7 +88,7 @@ const Admin: React.FC = () => {
   useEffect(() => {
     (async () => {
       try {
-        const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+        const base = apiBase();
         const r = await fetch(`${base}/api/admin/status`);
         if (r.ok) {
           const data = await r.json();
@@ -97,11 +100,27 @@ const Admin: React.FC = () => {
   useEffect(() => {
     (async () => {
       try {
-        const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+        const base = apiBase();
         const r = await fetch(`${base}/api/queenstown/config`);
         if (r.ok) {
           const data = await r.json();
           setQtnEnabled(!!data.enabled);
+          if (data.routes) setQtnRoutes({
+            Queenstown_to_KingPhalo: !!data.routes.Queenstown_to_KingPhalo,
+            KingPhalo_to_Queenstown: !!data.routes.KingPhalo_to_Queenstown,
+          });
+        } else {
+          try {
+            const raw = localStorage.getItem('totti_qtn_config');
+            if (raw) {
+              const d = JSON.parse(raw);
+              setQtnEnabled(!!d.enabled);
+              if (d.routes) setQtnRoutes({
+                Queenstown_to_KingPhalo: !!d.routes.Queenstown_to_KingPhalo,
+                KingPhalo_to_Queenstown: !!d.routes.KingPhalo_to_Queenstown,
+              });
+            }
+          } catch (_) {}
         }
       } catch (_) {}
     })();
@@ -109,7 +128,7 @@ const Admin: React.FC = () => {
   useEffect(() => {
     (async () => {
       try {
-        const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+        const base = apiBase();
         const r = await fetch(`${base}/api/health`);
         if (r.ok) {
           const data = await r.json();
@@ -122,17 +141,17 @@ const Admin: React.FC = () => {
 
   const isDateBlocked = blockedDates.includes(dateStr);
   const slotBlocked = (time: string) => !!blockedSlots.find(s => s.date === dateStr && s.route === route && s.time === time);
-  const blockDate = async () => { if (viewOnly) return; const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, ''); await fetch(`${base}/api/calendar/block-date`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: dateStr }) }); await refreshBlocked(); };
-  const unblockDate = async () => { if (viewOnly) return; const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, ''); await fetch(`${base}/api/calendar/unblock-date`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: dateStr }) }); await refreshBlocked(); };
+  const blockDate = async () => { if (viewOnly) return; const base = apiBase(); await fetch(`${base}/api/calendar/block-date`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: dateStr }) }); await refreshBlocked(); };
+  const unblockDate = async () => { if (viewOnly) return; const base = apiBase(); await fetch(`${base}/api/calendar/unblock-date`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: dateStr }) }); await refreshBlocked(); };
   const toggleSlot = async (time: string, block: boolean) => {
     if (viewOnly) return;
-    const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+    const base = apiBase();
     const ep = block ? `${base}/api/calendar/block-slot` : `${base}/api/calendar/unblock-slot`;
     await fetch(ep, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: dateStr, route, time }) });
     await refreshBlocked();
   };
-  const confirm = async (d:string, t:string) => { if (viewOnly) return; const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, ''); await fetch(`${base}/api/queenstown/confirm`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: d, time: t }) }); await refreshRequests(); };
-  const decline = async (d:string, t:string) => { if (viewOnly) return; const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, ''); await fetch(`${base}/api/queenstown/decline`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: d, time: t }) }); await refreshRequests(); };
+  const confirm = async (d:string, t:string) => { if (viewOnly) return; const base = apiBase(); await fetch(`${base}/api/queenstown/confirm`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: d, time: t }) }); await refreshRequests(); };
+  const decline = async (d:string, t:string) => { if (viewOnly) return; const base = apiBase(); await fetch(`${base}/api/queenstown/decline`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: d, time: t }) }); await refreshRequests(); };
   const syncCalendar = async () => {
     if (viewOnly) return;
     if (!icsEnabled && !graphEnabled) { setSyncMsg('Calendar sync unavailable'); return; }
@@ -148,7 +167,7 @@ const Admin: React.FC = () => {
     try {
       let total = 0;
       if (icsEnabled) {
-        const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+        const base = apiBase();
         const resp = await fetch(`${base}/api/calendar/ics?start=${dateStr}&end=${dateStr}`);
         if (resp.ok) {
           const data = await resp.json();
@@ -162,7 +181,7 @@ const Admin: React.FC = () => {
         }
       }
       if (graphEnabled) {
-        const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+        const base = apiBase();
         const resp = await fetch(`${base}/api/graph/availability?start=${dateStr}&end=${dateStr}`);
         if (resp.ok) {
           const data = await resp.json();
@@ -197,7 +216,7 @@ const Admin: React.FC = () => {
                 <Switch checked={viewOnly} onCheckedChange={toggleMode} />
               </div>
               <Button size="sm" variant="outline" onClick={() => setChangeOpen(true)}>Change PIN</Button>
-              <Button size="sm" variant="outline" onClick={() => { try { localStorage.removeItem('totti_admin'); sessionStorage.removeItem('totti_admin'); } catch (_) {}; setIsAdmin(false); }}>Logout</Button>
+              <Button size="sm" variant="outline" onClick={() => { try { localStorage.removeItem('totti_admin'); sessionStorage.removeItem('totti_admin'); } catch (_) {} ; setIsAdmin(false); navigate('/'); }}>Logout</Button>
             </>
           )}
         </div>
@@ -212,9 +231,21 @@ const Admin: React.FC = () => {
               <SelectItem value="requests">Requests</SelectItem>
             </SelectContent>
           </Select>
-          <div className="mt-2 flex items-center justify-between rounded-md border bg-secondary/30 px-3 py-2">
-            <Label className="text-sm">Queenstown options</Label>
-            <Switch checked={qtnEnabled} onCheckedChange={async (v) => { if (viewOnly) return; setQtnEnabled(v); try { const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, ''); await fetch(`${base}/api/queenstown/config`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: v }) }); } catch (_) {} }} />
+          <div className="mt-2 space-y-2 rounded-md border bg-secondary/30 px-3 py-2">
+              <div className="flex items-center justify-between">
+              <Label className="text-sm">Queenstown options</Label>
+              <Switch checked={qtnEnabled} onCheckedChange={async (v) => { if (viewOnly) return; setQtnEnabled(v); try { const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, ''); await fetch(`${base}/api/queenstown/config`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: v }) }); } catch (_) {} try { localStorage.setItem('totti_qtn_config', JSON.stringify({ enabled: v, routes: qtnRoutes })); } catch (_) {} try { if (typeof window !== 'undefined') window.dispatchEvent(new Event('qtn-config-update')); } catch (_) {} }} />
+            </div>
+            <div className="grid grid-cols-1 gap-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm">Queenstown → King Phalo</Label>
+                <Switch disabled={!qtnEnabled} checked={qtnRoutes.Queenstown_to_KingPhalo} onCheckedChange={async (v) => { if (viewOnly || !qtnEnabled) return; const next = { ...qtnRoutes, Queenstown_to_KingPhalo: v }; setQtnRoutes(next); try { const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, ''); await fetch(`${base}/api/queenstown/config`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ routes: { Queenstown_to_KingPhalo: v } }) }); } catch (_) {} try { localStorage.setItem('totti_qtn_config', JSON.stringify({ enabled: qtnEnabled, routes: next })); } catch (_) {} try { if (typeof window !== 'undefined') window.dispatchEvent(new Event('qtn-config-update')); } catch (_) {} }} />
+              </div>
+              <div className="flex items-center justify-between">
+                <Label className="text-sm">King Phalo → Queenstown</Label>
+                <Switch disabled={!qtnEnabled} checked={qtnRoutes.KingPhalo_to_Queenstown} onCheckedChange={async (v) => { if (viewOnly || !qtnEnabled) return; const next = { ...qtnRoutes, KingPhalo_to_Queenstown: v }; setQtnRoutes(next); try { const base = String((import.meta as any).env?.VITE_API_BASE_URL || '').replace(/\/+$/, ''); await fetch(`${base}/api/queenstown/config`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ routes: { KingPhalo_to_Queenstown: v } }) }); } catch (_) {} try { localStorage.setItem('totti_qtn_config', JSON.stringify({ enabled: qtnEnabled, routes: next })); } catch (_) {} try { if (typeof window !== 'undefined') window.dispatchEvent(new Event('qtn-config-update')); } catch (_) {} }} />
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -245,7 +276,8 @@ const Admin: React.FC = () => {
                 const prev = lastTap.current;
                 if ((modifiers as any)?.blocked && prev && prev.date === ymd && now - prev.ts < 400) {
                   if (!viewOnly) {
-                    await fetch('/api/calendar/unblock-date', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: ymd }) });
+                    const base = apiBase();
+                    await fetch(`${base}/api/calendar/unblock-date`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: ymd }) });
                     await refreshBlocked();
                   }
                   lastTap.current = null;
@@ -263,6 +295,8 @@ const Admin: React.FC = () => {
                 <Button variant="outline" disabled={viewOnly} onClick={blockDate}>Block Date</Button>
               )}
               <Button variant="secondary" disabled={viewOnly || (!icsEnabled && !graphEnabled) || syncing} onClick={syncCalendar}>Sync Calendar</Button>
+              <Button variant="secondary" disabled={viewOnly || !graphEnabled || syncing} onClick={async () => { setSyncing(true); setSyncMsg(''); try { const base = apiBase(); const resp = await fetch(`${base}/api/graph/push-blocks`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: dateStr }) }); if (resp.ok) { const d = await resp.json(); const n = Array.isArray(d.created) ? d.created.length : 0; setSyncMsg(n ? `Pushed ${n} event(s)` : 'No blocks to push'); } } catch (_) {} setSyncing(false); }}>Push to Outlook</Button>
+              <Button variant="outline" disabled={viewOnly || !graphEnabled || syncing} onClick={async () => { setSyncing(true); setSyncMsg(''); try { const base = apiBase(); const resp = await fetch(`${base}/api/graph/remove-blocks`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: dateStr }) }); if (resp.ok) { const d = await resp.json(); const n = typeof d.removed === 'number' ? d.removed : 0; setSyncMsg(n ? `Removed ${n} event(s)` : 'No matching events found'); } } catch (_) {} setSyncing(false); }}>Remove from Outlook</Button>
             </div>
             <div className="w-full flex flex-col gap-1">
               {(viewOnly || (!icsEnabled && !graphEnabled) || syncing) && (
@@ -276,7 +310,7 @@ const Admin: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div className="font-medium">Blocked Dates</div>
                 {blockedDates.length > 0 && (
-                  <Button size="sm" variant="outline" disabled={viewOnly} onClick={async () => { await fetch('/api/calendar/unblock-all', { method:'POST' }); await refreshBlocked(); }}>Unblock All</Button>
+                  <Button size="sm" variant="outline" disabled={viewOnly} onClick={async () => { const base = apiBase(); await fetch(`${base}/api/calendar/unblock-all`, { method:'POST' }); await refreshBlocked(); }}>Unblock All</Button>
                 )}
               </div>
               {blockedDates.length === 0 && (
@@ -290,13 +324,13 @@ const Admin: React.FC = () => {
                       <div key={label} className="border rounded-md p-3 bg-secondary/30">
                         <div className="flex items-center justify-between mb-2">
                           <div className="text-sm font-medium">{label}</div>
-                          <Button size="sm" variant="outline" disabled={viewOnly} onClick={async () => { await Promise.all(dates.map((dd) => fetch('/api/calendar/unblock-date', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: dd }) }))); await refreshBlocked(); }}>Unblock Month</Button>
+                          <Button size="sm" variant="outline" disabled={viewOnly} onClick={async () => { const base = apiBase(); await Promise.all(dates.map((dd) => fetch(`${base}/api/calendar/unblock-date`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: dd }) }))); await refreshBlocked(); }}>Unblock Month</Button>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                           {dates.map((dd) => (
                             <div key={dd} className="flex items-center justify-between border rounded-md p-2">
                               <div className="text-xs">{dd}</div>
-                              <Button size="sm" variant="outline" disabled={viewOnly} onClick={async () => { await fetch('/api/calendar/unblock-date', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: dd }) }); await refreshBlocked(); }}>Unblock</Button>
+                              <Button size="sm" variant="outline" disabled={viewOnly} onClick={async () => { const base = apiBase(); await fetch(`${base}/api/calendar/unblock-date`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: dd }) }); await refreshBlocked(); }}>Unblock</Button>
                             </div>
                           ))}
                         </div>

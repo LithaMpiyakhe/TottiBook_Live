@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { apiBase } from "@/lib/utils";
 
 interface AdminChangePinDialogProps {
   open: boolean;
@@ -21,7 +22,8 @@ const AdminChangePinDialog: React.FC<AdminChangePinDialogProps> = ({ open, onOpe
     if (!open) return;
     (async () => {
       try {
-        const r = await fetch('/api/admin/status');
+        const base = apiBase();
+        const r = await fetch(`${base}/api/admin/status`);
         if (r.ok) {
           const data = await r.json();
           setRequiresPin(!!data.requiresPin);
@@ -36,7 +38,8 @@ const AdminChangePinDialog: React.FC<AdminChangePinDialogProps> = ({ open, onOpe
     setSuccess(false);
     if (newPin !== confirmPin) { setError('PINs do not match'); setSubmitting(false); return; }
     try {
-      const resp = await fetch('/api/admin/change-pin', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ current: currentPin, next: newPin }) });
+      const base = apiBase();
+      const resp = await fetch(`${base}/api/admin/change-pin`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ current: currentPin, next: newPin }) });
       if (resp.ok) {
         setSuccess(true);
         setTimeout(() => onOpenChange(false), 800);

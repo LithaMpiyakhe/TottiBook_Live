@@ -7,7 +7,7 @@ const { URL } = require('url');
 const fs = require('fs');
 const path = require('path');
 
-const PORT = process.env.API_DEV_PORT ? Number(process.env.API_DEV_PORT) : 8787;
+const PORT = Number(process.env.PORT || process.env.API_DEV_PORT || 8787);
 const YOCO_API = 'https://payments.yoco.com/api/checkouts';
 const SECRET = process.env.YOCO_SECRET_KEY || '';
 const YOCO_TEST = String(process.env.YOCO_TEST_MODE || '').toLowerCase() === '1' || String(process.env.YOCO_TEST_MODE || '').toLowerCase() === 'true';
@@ -21,8 +21,13 @@ const GRAPH_TENANT_ID = process.env.GRAPH_TENANT_ID || '';
 const GRAPH_CLIENT_ID = process.env.GRAPH_CLIENT_ID || '';
 const GRAPH_CLIENT_SECRET = process.env.GRAPH_CLIENT_SECRET || '';
 const GRAPH_DEFAULT_UPN = process.env.GRAPH_USER_UPN || '';
+const NOTIFY_CLIENT_EMAIL = process.env.NOTIFY_CLIENT_EMAIL || '';
+const NOTIFY_ADMIN_EMAIL = process.env.NOTIFY_ADMIN_EMAIL || '';
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const RESEND_FROM = process.env.RESEND_FROM || '';
 // ICS calendar (optional)
 const ICS_URL = process.env.ICS_URL || '';
+let ICS_URL_RUNTIME = ICS_URL;
 // Simple admin PIN (optional)
 const ADMIN_PIN = process.env.ADMIN_PIN || '';
 let ADMIN_PIN_RUNTIME = '';
@@ -56,8 +61,13 @@ function parseBody(req) {
 const STATUS = new Map();
 const QUEENSTOWN = new Map();
 const QUEENSTOWN_STATUS = new Map();
+const QUEENSTOWN_DETAILS = new Map();
 const QTN_THRESHOLD = process.env.QTN_THRESHOLD ? Number(process.env.QTN_THRESHOLD) : 6;
 let QTN_ENABLED = process.env.QTN_ENABLED ? (String(process.env.QTN_ENABLED).toLowerCase() === 'true') : true;
+let QTN_ROUTES_ENABLED = {
+  Queenstown_to_KingPhalo: true,
+  KingPhalo_to_Queenstown: true,
+};
 const BLOCKED_SLOTS = new Set(); // key: `${date}|${route}|${time}`
 const BLOCKED_DATES = new Set(); // key: `YYYY-MM-DD`
 
@@ -150,13 +160,51 @@ const server = http.createServer(async (req, res) => {
     console.log('Webhook event received (dev):', JSON.stringify(event));
     try {
       const type = event && event.type;
+      const data = (event && event.data) || {};
       let ref = '';
-      if (event && event.data && event.data.metadata && event.data.metadata.clientReferenceId) {
-        ref = event.data.metadata.clientReferenceId;
+      if (data && data.metadata && data.metadata.clientReferenceId) {
+        ref = String(data.metadata.clientReferenceId);
+      }
+      if (!ref && data && data.clientReferenceId) {
+        ref = String(data.clientReferenceId);
+      }
+      if (!ref) {
+        const cid = (data && (data.id || data.checkoutId)) ? String(data.id || data.checkoutId) : '';
+        if (cid) {
+          for (const [k, v] of STATUS.entries()) {
+            if (v && v.checkoutId === cid) { ref = k; break; }
+          }
+        }
       }
       if (ref) {
-        const status = type === 'payment.succeeded' ? 'succeeded' : type === 'payment.failed' ? 'failed' : 'unknown';
+        let status = type === 'payment.succeeded' ? 'succeeded' : type === 'payment.failed' ? 'failed' : 'unknown';
+        if (status === 'unknown' && data && data.status) {
+          const s = String(data.status).toLowerCase();
+          if (s === 'succeeded' || s === 'success') status = 'succeeded';
+          else if (s === 'failed' || s === 'declined') status = 'failed';
+        }
         STATUS.set(ref, { status, updatedAt: Date.now() });
+        if (status === 'succeeded' && data && data.metadata) {
+          try {
+            const to = String(data.metadata.email || '');
+            const name = String(data.metadata.name || '');
+            const route = String(data.metadata.route || '');
+            const passengers = Number(data.metadata.passengers || 0);
+            const date = String(data.metadata.date || '');
+            const time = String(data.metadata.time || '');
+            if (to) {
+              const subject = `Booking confirmed: ${route} ${date} ${time}`;
+              const html = `<p>Dear ${name || 'Passenger'},</p><p>Your booking and payment have been confirmed.</p><p>Route: ${route}</p><p>Date: ${date}</p><p>Time: ${time}</p><p>Passengers: ${passengers}</p><p>Reference: ${ref}</p><p>Thank you.</p>`;
+              const cc = NOTIFY_CLIENT_EMAIL ? [NOTIFY_CLIENT_EMAIL] : [];
+              await sendMailUnified([to], cc, subject, html);
+            }
+            if (NOTIFY_ADMIN_EMAIL) {
+              const subjectA = `Admin: Booking confirmed ${date} ${time}`;
+              const htmlA = `<p>Booking confirmed via payment.</p><p>Reference: ${ref}</p><p>Passenger: ${name} &lt;${to}&gt;</p><p>Route: ${route}</p><p>Date: ${date}</p><p>Time: ${time}</p><p>Passengers: ${passengers}</p>`;
+              await sendMailUnified([NOTIFY_ADMIN_EMAIL], [], subjectA, htmlA);
+            }
+          } catch (_) {}
+        }
       }
     } catch (_) {}
     return json(res, 200, { received: true });
@@ -190,6 +238,23 @@ const server = http.createServer(async (req, res) => {
     ADMIN_PIN_RUNTIME = next;
     return json(res, 200, { ok: true });
   }
+
+  if (url.pathname === '/api/admin/get-ics-url' && req.method === 'GET') {
+    return json(res, 200, { icsUrl: ICS_URL_RUNTIME || '' });
+  }
+
+  if (url.pathname === '/api/admin/set-ics-url' && req.method === 'POST') {
+    const body = await parseBody(req);
+    const pin = String(body.pin || '');
+    const next = String(body.url || '').trim();
+    const effective = ADMIN_PIN_RUNTIME || ADMIN_PIN;
+    if (effective && pin !== effective) return json(res, 401, { ok: false, error: 'Invalid PIN' });
+    if (!/^https?:\/\//i.test(next)) return json(res, 400, { ok: false, error: 'Invalid ICS URL' });
+    ICS_URL_RUNTIME = next;
+    return json(res, 200, { ok: true, icsUrl: ICS_URL_RUNTIME });
+  }
+
+  
 
   if (url.pathname === '/api/yoco/status' && req.method === 'GET') {
     const ref = url.searchParams.get('ref') || '';
@@ -297,6 +362,7 @@ const server = http.createServer(async (req, res) => {
     const name = String(body.name || '');
     const email = String(body.email || '');
     const phone = String(body.phone || '');
+    const route = String(body.route || '');
     if (!date || !time || !passengers || !name || !email || !phone) {
       return json(res, 400, { ok: false });
     }
@@ -305,6 +371,9 @@ const server = http.createServer(async (req, res) => {
     const count = prev + passengers;
     QUEENSTOWN.set(key, count);
     if (!QUEENSTOWN_STATUS.has(key)) QUEENSTOWN_STATUS.set(key, 'pending');
+    const arr = QUEENSTOWN_DETAILS.get(key) || [];
+    arr.push({ route, passengers, name, email, phone });
+    QUEENSTOWN_DETAILS.set(key, arr);
     return json(res, 200, { ok: true, count, threshold: QTN_THRESHOLD });
   }
 
@@ -334,17 +403,21 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/api/queenstown/config' && req.method === 'GET') {
-    return json(res, 200, { enabled: !!QTN_ENABLED, threshold: QTN_THRESHOLD });
+    return json(res, 200, { enabled: !!QTN_ENABLED, threshold: QTN_THRESHOLD, routes: QTN_ROUTES_ENABLED });
   }
 
   if (url.pathname === '/api/queenstown/config' && req.method === 'POST') {
     const body = await parseBody(req);
     if (typeof body.enabled === 'boolean') QTN_ENABLED = body.enabled;
-    if (typeof body.threshold === 'number' && Number.isFinite(body.threshold)) {
-      // runtime-only adjustment of threshold
-      // note: env value remains unchanged; dev server holds runtime value separately
+    if (body && body.routes && typeof body.routes === 'object') {
+      for (const k of ['Queenstown_to_KingPhalo','KingPhalo_to_Queenstown']) {
+        if (typeof body.routes[k] === 'boolean') QTN_ROUTES_ENABLED[k] = body.routes[k];
+      }
     }
-    return json(res, 200, { enabled: !!QTN_ENABLED, threshold: QTN_THRESHOLD });
+    if (typeof body.threshold === 'number' && Number.isFinite(body.threshold)) {
+      // ignored: runtime-only demonstration
+    }
+    return json(res, 200, { enabled: !!QTN_ENABLED, threshold: QTN_THRESHOLD, routes: QTN_ROUTES_ENABLED });
   }
 
   if (url.pathname === '/api/queenstown/confirm' && req.method === 'POST') {
@@ -354,6 +427,23 @@ const server = http.createServer(async (req, res) => {
     const key = `${date}|${time}`;
     if (!QUEENSTOWN.has(key)) return json(res, 404, { ok: false });
     QUEENSTOWN_STATUS.set(key, 'confirmed');
+    try {
+      const list = QUEENSTOWN_DETAILS.get(key) || [];
+      for (const r of list) {
+        const to = String(r.email || '');
+        if (!to) continue;
+        const subject = `Booking confirmed: Queenstown shuttle ${date} ${time}`;
+        const html = `<p>Dear ${r.name},</p><p>Your request for the Queenstown shuttle has been confirmed.</p><p>Date: ${date}</p><p>Time: ${time}</p><p>Passengers: ${r.passengers}</p><p>Route: ${r.route}</p><p>Contact: ${r.phone}</p><p>Thank you.</p>`;
+        const cc = NOTIFY_CLIENT_EMAIL ? [NOTIFY_CLIENT_EMAIL] : [];
+        await sendMailUnified([to], cc, subject, html);
+      }
+      if (NOTIFY_ADMIN_EMAIL && Array.isArray(list) && list.length) {
+        const subjectA = `Admin: Queenstown confirmed ${date} ${time}`;
+        const items = list.map(r => `<li>${r.name} &lt;${r.email}&gt; — ${r.passengers} pax — ${r.route} — ${r.phone}</li>`).join('');
+        const htmlA = `<p>Queenstown shuttle confirmed.</p><p>Date: ${date}</p><p>Time: ${time}</p><ul>${items}</ul>`;
+        await sendMailUnified([NOTIFY_ADMIN_EMAIL], [], subjectA, htmlA);
+      }
+    } catch (_) {}
     return json(res, 200, { ok: true });
   }
 
@@ -403,12 +493,113 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (url.pathname === '/api/graph/push-blocks' && req.method === 'POST') {
+    const body = await parseBody(req);
+    const pin = String(body.pin || '');
+    const date = String(body.date || '').slice(0,10);
+    const upn = String(body.upn || GRAPH_DEFAULT_UPN);
+    const effective = ADMIN_PIN_RUNTIME || ADMIN_PIN;
+    if (effective && pin !== effective) return json(res, 401, { ok: false, error: 'Invalid PIN' });
+    if (!GRAPH_TENANT_ID || !GRAPH_CLIENT_ID || !GRAPH_CLIENT_SECRET || !upn) return json(res, 500, { ok: false, error: 'Graph not configured' });
+    if (!date) return json(res, 400, { ok: false, error: 'Missing date' });
+    try {
+      const tokenUrl = `https://login.microsoftonline.com/${GRAPH_TENANT_ID}/oauth2/v2.0/token`;
+      const form = `client_id=${encodeURIComponent(GRAPH_CLIENT_ID)}&client_secret=${encodeURIComponent(GRAPH_CLIENT_SECRET)}&grant_type=client_credentials&scope=${encodeURIComponent('https://graph.microsoft.com/.default')}`;
+      const tokResp = await postForm(tokenUrl, form);
+      const tokData = JSON.parse(tokResp.body);
+      const accessToken = tokData.access_token;
+      const tz = 'South Africa Standard Time';
+      const times = new Set();
+      for (const key of Array.from(BLOCKED_SLOTS.values())) {}
+      for (const key of BLOCKED_SLOTS) {
+        const [d, route, time] = String(key).split('|');
+        if (d === date) times.add(time);
+      }
+      const created = [];
+      for (const t of Array.from(times)) {
+        const start = `${date}T${t}:00`;
+        const end = `${date}T${t}:00`;
+        const [HH, MM] = t.split(':').map(Number);
+        const endHH = String(HH + 1).padStart(2,'0');
+        const endIso = `${date}T${endHH}:${String(MM).padStart(2,'0')}:00`;
+        const payload = {
+          subject: 'Totti Unavailable',
+          showAs: 'busy',
+          start: { dateTime: start, timeZone: tz },
+          end: { dateTime: endIso, timeZone: tz },
+          body: { contentType: 'Text', content: `Blocked slot ${t} on ${date}` },
+        };
+        const resp = await postJson(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(upn)}/events`, { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }, payload);
+        let data = {}; try { data = JSON.parse(resp.body); } catch (_) { data = { raw: resp.body }; }
+        if (resp.statusCode >= 200 && resp.statusCode < 300 && data && data.id) {
+          created.push({ id: data.id, time: t });
+        }
+      }
+      const allDay = BLOCKED_DATES.has(date);
+      if (allDay) {
+        const payload = {
+          subject: 'Totti Unavailable (All Day)',
+          showAs: 'busy',
+          isAllDay: true,
+          start: { dateTime: `${date}T00:00:00`, timeZone: tz },
+          end: { dateTime: `${date}T23:59:59`, timeZone: tz },
+          body: { contentType: 'Text', content: `Blocked date ${date}` },
+        };
+        const resp = await postJson(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(upn)}/events`, { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }, payload);
+        let data = {}; try { data = JSON.parse(resp.body); } catch (_) { data = { raw: resp.body }; }
+        if (resp.statusCode >= 200 && resp.statusCode < 300 && data && data.id) {
+          created.push({ id: data.id, time: 'ALL_DAY' });
+        }
+      }
+      return json(res, 200, { ok: true, created });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: (err && err.message) ? err.message : 'Unexpected Graph write error' });
+    }
+  }
+
+  if (url.pathname === '/api/graph/remove-blocks' && req.method === 'POST') {
+    const body = await parseBody(req);
+    const pin = String(body.pin || '');
+    const date = String(body.date || '').slice(0,10);
+    const upn = String(body.upn || GRAPH_DEFAULT_UPN);
+    const effective = ADMIN_PIN_RUNTIME || ADMIN_PIN;
+    if (effective && pin !== effective) return json(res, 401, { ok: false, error: 'Invalid PIN' });
+    if (!GRAPH_TENANT_ID || !GRAPH_CLIENT_ID || !GRAPH_CLIENT_SECRET || !upn) return json(res, 500, { ok: false, error: 'Graph not configured' });
+    if (!date) return json(res, 400, { ok: false, error: 'Missing date' });
+    try {
+      const tokenUrl = `https://login.microsoftonline.com/${GRAPH_TENANT_ID}/oauth2/v2.0/token`;
+      const form = `client_id=${encodeURIComponent(GRAPH_CLIENT_ID)}&client_secret=${encodeURIComponent(GRAPH_CLIENT_SECRET)}&grant_type=client_credentials&scope=${encodeURIComponent('https://graph.microsoft.com/.default')}`;
+      const tokResp = await postForm(tokenUrl, form);
+      const tokData = JSON.parse(tokResp.body);
+      const accessToken = tokData.access_token;
+      const startDt = `${date}T00:00:00Z`;
+      const endDt = `${date}T23:59:59Z`;
+      const viewUrl = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(upn)}/calendarView?startDateTime=${encodeURIComponent(startDt)}&endDateTime=${encodeURIComponent(endDt)}&$select=id,subject,start,end,showAs`;
+      const calResp = await getJson(viewUrl, { Authorization: `Bearer ${accessToken}` });
+      const calData = JSON.parse(calResp.body);
+      const events = Array.isArray(calData.value) ? calData.value : [];
+      const targets = events.filter(e => {
+        const s = String(e.subject || '').toLowerCase();
+        return s.includes('totti unavailable');
+      });
+      let removed = 0;
+      for (const ev of targets) {
+        const delUrl = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(upn)}/events/${encodeURIComponent(ev.id)}`;
+        const resp = await postJson(delUrl, { Authorization: `Bearer ${accessToken}`, Accept: 'application/json', 'X-HTTP-Method-Override': 'DELETE' }, {});
+        if (resp.statusCode === 204 || (resp.statusCode >= 200 && resp.statusCode < 300)) removed++;
+      }
+      return json(res, 200, { ok: true, removed });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: (err && err.message) ? err.message : 'Unexpected Graph delete error' });
+    }
+  }
+
   if (url.pathname === '/api/calendar/ics' && req.method === 'GET') {
-    if (!ICS_URL) return json(res, 500, { error: 'Missing ICS_URL env' });
+    if (!ICS_URL_RUNTIME) return json(res, 500, { error: 'Missing ICS_URL env' });
     const start = String(url.searchParams.get('start') || '').slice(0,10);
     const end = String(url.searchParams.get('end') || start).slice(0,10);
     try {
-      const icsResp = await getJson(ICS_URL, { Accept: 'text/calendar' });
+      const icsResp = await getJson(ICS_URL_RUNTIME, { Accept: 'text/calendar' });
       const text = icsResp.body || '';
       const events = [];
       const parts = text.split('BEGIN:VEVENT');
@@ -450,7 +641,7 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/api/health' && req.method === 'GET') {
     const graphPresent = !!GRAPH_TENANT_ID && !!GRAPH_CLIENT_ID && !!GRAPH_CLIENT_SECRET;
-    return json(res, 200, { secretPresent: !!SECRET, siteUrl: normalizeSiteUrl(SITE_URL), icsPresent: !!ICS_URL, graphPresent });
+    return json(res, 200, { secretPresent: !!SECRET, siteUrl: normalizeSiteUrl(SITE_URL), icsPresent: !!ICS_URL_RUNTIME, graphPresent });
   }
 
   // Static file serving and SPA fallback (Hostinger)
@@ -545,4 +736,40 @@ function getJson(urlString, headers) {
     req.on('error', (err) => reject(err));
     req.end();
   });
+}
+async function trySendGraph(to, cc, subject, html) {
+  if (!GRAPH_TENANT_ID || !GRAPH_CLIENT_ID || !GRAPH_CLIENT_SECRET || !GRAPH_DEFAULT_UPN) return false;
+  try {
+    const tokenUrl = `https://login.microsoftonline.com/${GRAPH_TENANT_ID}/oauth2/v2.0/token`;
+    const form = `client_id=${encodeURIComponent(GRAPH_CLIENT_ID)}&client_secret=${encodeURIComponent(GRAPH_CLIENT_SECRET)}&grant_type=client_credentials&scope=${encodeURIComponent('https://graph.microsoft.com/.default')}`;
+    const tokResp = await postForm(tokenUrl, form);
+    const tokData = JSON.parse(tokResp.body);
+    const accessToken = tokData.access_token;
+    const message = {
+      subject,
+      body: { contentType: 'HTML', content: html },
+      toRecipients: (Array.isArray(to) ? to : [to]).map((a) => ({ emailAddress: { address: a } })),
+      ccRecipients: (Array.isArray(cc) ? cc : []).map((a) => ({ emailAddress: { address: a } })),
+    };
+    const payload = { message, saveToSentItems: true };
+    const resp = await postJson(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(GRAPH_DEFAULT_UPN)}/sendMail`, { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }, payload);
+    return resp.statusCode >= 200 && resp.statusCode < 300;
+  } catch (_) {
+    return false;
+  }
+}
+async function trySendResend(to, cc, subject, html) {
+  if (!RESEND_API_KEY || !RESEND_FROM) return false;
+  const payload = { from: RESEND_FROM, to: Array.isArray(to) ? to : [to], subject, html };
+  if (Array.isArray(cc) && cc.length) payload.cc = cc;
+  try {
+    const resp = await postJson('https://api.resend.com/emails', { Authorization: `Bearer ${RESEND_API_KEY}`, Accept: 'application/json' }, payload);
+    return resp.statusCode >= 200 && resp.statusCode < 300;
+  } catch (_) {
+    return false;
+  }
+}
+async function sendMailUnified(to, cc, subject, html) {
+  if (await trySendGraph(to, cc, subject, html)) return true;
+  return await trySendResend(to, cc, subject, html);
 }

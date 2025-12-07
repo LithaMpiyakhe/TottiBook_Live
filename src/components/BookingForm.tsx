@@ -12,7 +12,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { cn } from "@/lib/utils";
+import { cn, apiBase } from "@/lib/utils";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { showSuccess, showError } from "@/utils/toast";
 import PaymentForm from "@/components/PaymentForm";
@@ -47,6 +47,7 @@ const timeSlots = [
 ];
 
 const BookingForm: React.FC = () => {
+  const base = apiBase();
   const [step, setStep] = useState(1);
   const [paymentResult, setPaymentResult] = useState<any>(null);
   const [bookingId, setBookingId] = useState<string | null>(null);
@@ -68,6 +69,7 @@ const BookingForm: React.FC = () => {
   const passengerCount = watch("passengers");
   const [qtnStats, setQtnStats] = useState<{count:number;threshold:number}|null>(null);
   const [qtnEnabled, setQtnEnabled] = useState<boolean>(true);
+  const [qtnRoutes, setQtnRoutes] = useState<{Queenstown_to_KingPhalo:boolean;KingPhalo_to_Queenstown:boolean}>({ Queenstown_to_KingPhalo: true, KingPhalo_to_Queenstown: true });
   const selectedDate = watch("date");
   const selectedTime = watch("time");
 
@@ -76,7 +78,7 @@ const BookingForm: React.FC = () => {
       if (selectedRoute?.includes('Queenstown') && selectedDate && selectedTime) {
         try {
           const dateStr = selectedDate.toISOString().slice(0,10);
-          const resp = await fetch(`/api/queenstown/stats?date=${dateStr}&time=${encodeURIComponent(selectedTime)}`);
+          const resp = await fetch(`${base}/api/queenstown/stats?date=${dateStr}&time=${encodeURIComponent(selectedTime)}`);
           if (resp.ok) {
             const data = await resp.json();
             setQtnStats({ count: data.count, threshold: data.threshold });
@@ -161,7 +163,7 @@ const BookingForm: React.FC = () => {
   useEffect(() => {
     (async () => {
       try {
-        const resp = await fetch('/api/calendar/blocked');
+        const resp = await fetch(`${base}/api/calendar/blocked`);
         if (resp.ok) {
           const data = await resp.json();
           setBlockedDates(Array.isArray(data.blocked) ? data.blocked : []);
@@ -169,10 +171,25 @@ const BookingForm: React.FC = () => {
         }
       } catch (_) {}
       try {
-        const cfg = await fetch('/api/queenstown/config');
+        const cfg = await fetch(`${base}/api/queenstown/config`);
         if (cfg.ok) {
           const d = await cfg.json();
           setQtnEnabled(!!d.enabled);
+          if (d.routes) setQtnRoutes({
+            Queenstown_to_KingPhalo: !!d.routes.Queenstown_to_KingPhalo,
+            KingPhalo_to_Queenstown: !!d.routes.KingPhalo_to_Queenstown,
+          });
+        }
+      } catch (_) {}
+      try {
+        const raw = localStorage.getItem('totti_qtn_config');
+        if (raw) {
+          const d = JSON.parse(raw);
+          setQtnEnabled(!!d.enabled);
+          if (d.routes) setQtnRoutes({
+            Queenstown_to_KingPhalo: !!d.routes.Queenstown_to_KingPhalo,
+            KingPhalo_to_Queenstown: !!d.routes.KingPhalo_to_Queenstown,
+          });
         }
       } catch (_) {}
     })();
@@ -181,7 +198,7 @@ const BookingForm: React.FC = () => {
   useEffect(() => {
     const handler = async () => {
       try {
-        const resp = await fetch('/api/calendar/blocked');
+        const resp = await fetch(`${base}/api/calendar/blocked`);
         if (resp.ok) {
           const data = await resp.json();
           setBlockedDates(Array.isArray(data.blocked) ? data.blocked : []);
@@ -192,6 +209,27 @@ const BookingForm: React.FC = () => {
     if (typeof window !== 'undefined') {
       window.addEventListener('blocked-update', handler);
       return () => window.removeEventListener('blocked-update', handler);
+    }
+    return;
+  }, []);
+
+  useEffect(() => {
+    const handler = () => {
+      try {
+        const raw = localStorage.getItem('totti_qtn_config');
+        if (raw) {
+          const d = JSON.parse(raw);
+          setQtnEnabled(!!d.enabled);
+          if (d.routes) setQtnRoutes({
+            Queenstown_to_KingPhalo: !!d.routes.Queenstown_to_KingPhalo,
+            KingPhalo_to_Queenstown: !!d.routes.KingPhalo_to_Queenstown,
+          });
+        }
+      } catch (_) {}
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('qtn-config-update', handler);
+      return () => window.removeEventListener('qtn-config-update', handler);
     }
     return;
   }, []);
@@ -233,25 +271,25 @@ const BookingForm: React.FC = () => {
                       King Phalo Airport → Mthatha
                     </FormLabel>
                   </FormItem>
-                  {qtnEnabled && (
-                    <>
-                      <FormItem className="flex items-center space-x-3 space-y-0">
-                        <FormControl>
-                          <RadioGroupItem value="Queenstown_to_KingPhalo" />
-                        </FormControl>
-                        <FormLabel className="font-normal">
-                          Queenstown → King Phalo Airport (Subject to demand)
-                        </FormLabel>
-                      </FormItem>
-                      <FormItem className="flex items-center space-x-3 space-y-0">
-                        <FormControl>
-                          <RadioGroupItem value="KingPhalo_to_Queenstown" />
-                        </FormControl>
-                        <FormLabel className="font-normal">
-                          King Phalo Airport → Queenstown (Subject to demand)
-                        </FormLabel>
-                      </FormItem>
-                    </>
+                  {qtnEnabled && qtnRoutes.Queenstown_to_KingPhalo && (
+                    <FormItem className="flex items-center space-x-3 space-y-0">
+                      <FormControl>
+                        <RadioGroupItem value="Queenstown_to_KingPhalo" />
+                      </FormControl>
+                      <FormLabel className="font-normal">
+                        Queenstown → King Phalo Airport (Subject to demand)
+                      </FormLabel>
+                    </FormItem>
+                  )}
+                  {qtnEnabled && qtnRoutes.KingPhalo_to_Queenstown && (
+                    <FormItem className="flex items-center space-x-3 space-y-0">
+                      <FormControl>
+                        <RadioGroupItem value="KingPhalo_to_Queenstown" />
+                      </FormControl>
+                      <FormLabel className="font-normal">
+                        King Phalo Airport → Queenstown (Subject to demand)
+                      </FormLabel>
+                    </FormItem>
                   )}
                 </RadioGroup>
               </FormControl>
@@ -500,7 +538,7 @@ const BookingForm: React.FC = () => {
     if (data.route.includes("Queenstown")) {
       const submitRequest = async () => {
         try {
-          const resp = await fetch('/api/queenstown/request', {
+          const resp = await fetch(`${base}/api/queenstown/request`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -545,6 +583,11 @@ const BookingForm: React.FC = () => {
         bookingData={{
           route: data.route === "Mthatha_to_KingPhalo" ? "Mthatha → King Phalo Airport" : "King Phalo Airport → Mthatha",
           passengers: data.passengers,
+          date: data.date.toISOString().slice(0,10),
+          time: data.time,
+          name: data.name,
+          email: data.email,
+          phone: data.phone,
         }}
         onPaymentSuccess={handlePaymentSuccess}
         onPaymentCancel={handlePaymentCancel}

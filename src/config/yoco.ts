@@ -24,7 +24,7 @@ export const SHUTTLE_PRICING = {
 };
 
 export function calculateTotalPrice(passengers: number): number {
-  let basePrice = SHUTTLE_PRICING.BASE_PRICE * passengers;
+  const basePrice = SHUTTLE_PRICING.BASE_PRICE * passengers;
   let discount = 0;
   
   // Apply group discounts
